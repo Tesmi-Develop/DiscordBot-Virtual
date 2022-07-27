@@ -2,28 +2,35 @@
 using System.Threading.Tasks;
 using Discord;
 using Discord.WebSocket;
+using Newtonsoft.Json;
 
-namespace DiscrodBot
+namespace DiscordBot_Virtual
 {
     public class Programm
     {
-        DiscordSocketClient client;
-        ulong ChannelId;
-        static void Main(string[] args) => new Programm().MainAsync();
+        private DiscordSocketClient client = new DiscordSocketClient();
+
+        private Data data;
+        private Config config;
+
+        private string pathData = Path.Combine(Environment.CurrentDirectory, "data.json");
+        private string pathConfig = Path.Combine(Environment.CurrentDirectory, "config.json");
+
+        private static void Main(string[] args) => new Programm().MainAsync();
 
         public async Task MainAsync()
         {
-            client = new DiscordSocketClient();
             client.MessageReceived += CommandsHandler;
             client.Log += Log;
+            AppDomain.CurrentDomain.ProcessExit += new EventHandler(CurrentDomainProcessExit);
 
-            Console.WriteLine("Введите токен бота");
-            var token = Console.ReadLine();
+            config = ReadConfig();
+            data = ReadData();
+
+            string token = config.Token ?? "";
 
             await client.LoginAsync(TokenType.Bot, token);
             await client.StartAsync();
-
-            //await Task.Delay(-1);
 
             Console.ReadKey();
         }
@@ -34,59 +41,70 @@ namespace DiscrodBot
 
             string[] splitingResult = message.Content.Split(' ');
 
+            SocketGuildUser user = (SocketGuildUser) message.Author;
+            SocketGuild server = user.Guild;
+            IChannel channel = message.Channel;
+
+            if (user == null || server == null) return;
+
             switch (splitingResult[0])
             {
-                case "!ПоменятьКанал":
+                case "!поменятьКанал":
+                    if (user.Guild.Owner != user)
                     {
-                        var user = message.Author as SocketGuildUser;
-
-                        if (user == null) break;
-
-                        if (user.Guild.Owner != user)
-                        {
-                            await message.Channel.SendMessageAsync("Только владелец может использовать эту команду");
-                            break;
-                        }
-
-                        ChannelId = message.Channel.Id;
-
-                        await message.Channel.SendMessageAsync("Канал был изменён");
-
+                        await message.Channel.SendMessageAsync("Только владелец может использовать эту команду");
                         break;
                     }
+
+                    if (!data.ChannelServersIdeas.ContainsKey(server.Id))
+                    {
+                    data.ChannelServersIdeas.Add(server.Id, message.Channel.Id);
+                    }
+
+                    data.ChannelServersIdeas[server.Id] = message.Channel.Id;
+
+                    await message.Channel.SendMessageAsync("Канал был изменён");
+
+                    await message.DeleteAsync();
+
+                    break;
+
                 case "!идея":
+                    if (!data.ChannelServersIdeas.TryGetValue(server.Id, out ulong channelIdeasId))
                     {
-                        var channel = await GetChannel(ChannelId);
-
-                        if (channel == null)
-                        {
-                            await message.Channel.SendMessageAsync("Для начало нужно установить канал !ПоменятьКанал");
-                            break;
-                        }
-
-                        if (channel is IMessageChannel msgChannel)
-                        {
-                            if (splitingResult.Length == 1)
-                            {
-                                await msgChannel.SendMessageAsync("Неверные аргументы, !идея (ваша идея)");
-                                break;
-                            }
-
-                            string messageForSend = "";
-
-                            for (int i = 1; i < splitingResult.Length; i++)
-                            {
-                                messageForSend += $"{splitingResult[i]} ";
-                            }
-
-                            IUserMessage sentMessage = await msgChannel.SendMessageAsync(messageForSend);
-
-                            await sentMessage.AddReactionAsync(new Emoji("✅"));
-                            await sentMessage.AddReactionAsync(new Emoji("❌"));
-                        }
-
+                        await message.Channel.SendMessageAsync("Для начало нужно установить канал команндой: \"!ПоменятьКанал\"");
                         break;
                     }
+
+                    IMessageChannel? channelIdeas = (IMessageChannel?)await client.GetChannelAsync(channelIdeasId);
+
+                    if (channelIdeas == null)
+                    {
+                        await message.Channel.SendMessageAsync("Для начало нужно установить канал команндой: \"!ПоменятьКанал\"");
+                        break;
+                    }
+
+                    if (splitingResult.Length == 1)
+                    {
+                        await message.Channel.SendMessageAsync("Неверное количество аргументов: !идея <идея>");
+                        break;
+                    }
+
+                    string messageForSend = "";
+
+                    for (int i = 1; i < splitingResult.Length; i++)
+                    {
+                        messageForSend += $"{splitingResult[i]} ";
+                    }
+
+                    IUserMessage sentMessage = await channelIdeas.SendMessageAsync(messageForSend);
+
+                    await sentMessage.AddReactionAsync(new Emoji("✅"));
+                    await sentMessage.AddReactionAsync(new Emoji("❌"));
+
+                    await message.DeleteAsync();
+                    break;
+                    
             }
             return;
         }
@@ -97,13 +115,30 @@ namespace DiscrodBot
             return Task.CompletedTask;
         }
 
-        private async ValueTask<IChannel?> GetChannel(ulong id)
+        private void SaveData(Data data)
         {
-            if (id == 0) return null;
+            string json = JsonConvert.SerializeObject(data, Formatting.Indented);
 
-            var channel = await client.GetChannelAsync(id);
+            File.WriteAllText(pathData, json);
+        }
+        private Data ReadData()
+        {
+            if (!File.Exists(pathData)) return new Data(new Dictionary<ulong, ulong>());
 
-            return channel;
+            return JsonConvert.DeserializeObject<Data>(File.ReadAllText(pathData));
+        }
+
+        private void CurrentDomainProcessExit(object sender, EventArgs e)
+        {
+            SaveData(data);
+            Console.WriteLine("exit");
+        }
+        
+        private Config ReadConfig()
+        {
+            if (!File.Exists(pathData)) return new Config();
+
+            return JsonConvert.DeserializeObject<Config>(File.ReadAllText(pathConfig));
         }
     }
 }
