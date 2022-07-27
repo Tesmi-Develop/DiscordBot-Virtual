@@ -136,7 +136,15 @@ namespace DiscordBot_Virtual
         
         private Config ReadConfig()
         {
-            if (!File.Exists(pathData)) return new Config("");
+            if (!File.Exists(pathConfig)) 
+            {
+                string config = JsonConvert.SerializeObject(new Config(""), Formatting.Indented);
+                File.WriteAllText(pathConfig, config);
+
+                Console.WriteLine(1);
+
+                return new Config("");
+            }
 
             return JsonConvert.DeserializeObject<Config>(File.ReadAllText(pathConfig));
         }
